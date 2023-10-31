@@ -5,6 +5,7 @@ import statsmodels.formula.api as smf
 import plotly.graph_objs as go
 from plotly.subplots import make_subplots
 import pandas as pd
+from datetime import date
 
 import warnings
 warnings.filterwarnings("ignore")
