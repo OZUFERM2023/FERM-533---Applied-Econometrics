@@ -1,47 +1,45 @@
 # Let's start with importing the necessary libraries as we go
 import yfinance as yf
-import matplotlib.pyplot as plt
-from datetime import date
-import statsmodels.api as sm
+import matplotlib.pyplot as plt 
+import statsmodels.formula.api as smf
 import plotly.graph_objs as go
 from plotly.subplots import make_subplots
-import pandas as pd
 
-def plot_stock_price(ticker, start_date, end_date):
+import warnings
+warnings.filterwarnings("ignore")
+
+def plot_stock_price(ticker, start_date):
     # Download stock data from Yahoo Finance
-    stock_data = yf.download(ticker, start=start_date, end=end_date)
+    stock_data = yf.download(ticker, start=start_date, interval='1mo')
 
     # Resample data to monthly frequency
-    monthly_data = stock_data['Close'].resample('M').mean()
+    stock_data['Returns'] = stock_data['Adj Close'].pct_change().dropna()
 
     # Plot the stock price
     plt.figure(figsize=(12, 6))
-    plt.plot(monthly_data, linestyle='-')
+    plt.plot(stock_data['Adj Close'], linestyle='-')
     plt.title(f'{ticker} Stock Price (Monthly)')
     plt.xlabel('Date')
     plt.ylabel('Stock Price (USD)')
     plt.grid(True)
     plt.show()
     
-def calculate_monthly_returns(ticker, start_date, end_date):
+def calculate_monthly_returns(ticker, start_date):
     # Download stock data from Yahoo Finance
-    stock_data = yf.download(ticker, start=start_date, end=end_date)
+    stock_data = yf.download(ticker, start=start_date, interval='1mo')
 
-    # Calculate daily returns
-    daily_returns = stock_data['Close'].pct_change()
-
-    # Resample daily returns to monthly frequency and drop NaN values
-    monthly_returns = daily_returns.resample('M').mean().dropna()
+    # Resample data to monthly frequency
+    stock_data['Returns'] = stock_data['Adj Close'].pct_change().dropna()
 
     # Print summary
     print("\nSummary of Monthly Returns:")
-    print(monthly_returns.describe())
+    print(stock_data['Returns'].describe())
     
-    return monthly_returns
+    return stock_data['Returns']
 
-def plot_monthly_returns(ticker, start_date, end_date):
+def plot_monthly_returns(ticker, start_date):
     # Calculate monthly returns
-    monthly_returns = calculate_monthly_returns(ticker, start_date, end_date)
+    monthly_returns = calculate_monthly_returns(ticker, start_date)
 
     # Plot the monthly returns
     plt.figure(figsize=(12, 6))
@@ -53,53 +51,42 @@ def plot_monthly_returns(ticker, start_date, end_date):
     plt.show()
     
 
-def regress_returns(stock_ticker, benchmark_ticker, start_date, end_date):
+def regress_returns(stock_ticker, benchmark_ticker, start_date):
     # Download stock and benchmark data from Yahoo Finance
-    stock_data = yf.download(stock_ticker, start=start_date, end=end_date)['Close'].pct_change().dropna()
-    benchmark_data = yf.download(benchmark_ticker, start=start_date, end=end_date)['Close'].pct_change().dropna()
-
-    # Add a constant term to the independent variable (benchmark)
-    X = sm.add_constant(benchmark_data)
+    stock_data = yf.download(stock_ticker, start=start_date, interval='1mo')
+    stock_data['Returns'] = stock_data['Adj Close'].pct_change()
+    benchmark_data = yf.download(benchmark_ticker, start=start_date, interval='1mo')
+    benchmark_data['Returns'] = benchmark_data['Adj Close'].pct_change()
+    merged_data = stock_data[['Returns']].join(benchmark_data['Returns'].rename('Benchmark_Returns')).dropna()
 
     # Fit the regression model, use Ordinary Least Squares
-    model = sm.OLS(stock_data, X).fit()
+    model = smf.ols("Returns ~ Benchmark_Returns", data=merged_data).fit()
 
     # Print out the regression results
     print(model.summary())
 
-    # Plot actual vs predicted returns
-    plt.figure(figsize=(12, 6))
+def conf_int95(stock_ticker, benchmark_ticker, start_date):
+    # Download stock and benchmark data from Yahoo Finance
+    stock_data = yf.download(stock_ticker, start=start_date, interval='1mo')
+    stock_data['Returns'] = stock_data['Adj Close'].pct_change()
+    benchmark_data = yf.download(benchmark_ticker, start=start_date, interval='1mo')
+    benchmark_data['Returns'] = benchmark_data['Adj Close'].pct_change()
+    merged_data = stock_data[['Returns']].join(benchmark_data['Returns'].rename('Benchmark_Returns')).dropna()
 
-    # Plot actual returns
-    plt.plot(stock_data.index, stock_data, label=f'{stock_ticker} Actual Returns', linestyle='-')
-
-    # Plot predicted returns
-    plt.plot(stock_data.index, model.predict(X), label=f'{stock_ticker} Predicted Returns', linestyle='-')
-
-    plt.title(f'{stock_ticker} Returns vs. Benchmark Returns')
-    plt.xlabel('Date')
-    plt.ylabel('Returns')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+    # Fit the regression model, use Ordinary Least Squares
+    model = smf.ols("Returns ~ Benchmark_Returns", data=merged_data).fit()
+    interval_95 = model.conf_int(alpha=0.05).loc['Benchmark_Returns']
+    print(f'95% Confidence Interval for the Coefficient of S&P 500 Returns: \n {interval_95}')
     
-def simple_regression(ticker, start_date, end_date):
-    # Download stock data from Yahoo Finance
-    stock_data = yf.download(ticker, start=start_date, end=end_date)
-
-    # Calculate monthly returns
-    stock_data['Returns'] = stock_data['Close'].pct_change()
+def simple_regression(stock_ticker, start_date):
+    stock_data = yf.download(stock_ticker, start=start_date, interval='1mo')
+    stock_data['Returns'] = stock_data['Adj Close'].pct_change()
 
     # Create a dummy variable for January
     stock_data['Is_January'] = (stock_data.index.month == 1).astype(int)
 
-    # Drop missing values
-    stock_data = stock_data.dropna()
-
     # Run regression
-    X = sm.add_constant(stock_data['Is_January'])
-    y = stock_data['Returns']
-    model = sm.OLS(y, X).fit()
+    model = smf.ols("Returns ~ Is_January", data = stock_data.dropna()).fit()
 
     # Print regression summary
     print(model.summary())
@@ -183,53 +170,3 @@ def Seasonality_Dynamic(ticker, start=None, end=None):
     
     data_df = pd.DataFrame(data.T)
     return data_df
-
-def Seasonality_Static(ticker, start=None, end=None):
-    if start is None:
-        start = "2020-01-01"
-    if end is None:
-        end = date.today()
-
-    price = yf.download(ticker, start, end)
-    df = pd.DataFrame({'return': price['Close'].pct_change().fillna(0)})
-
-    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'June', 'July', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    df = df[df.index >= df[df.index.month == 1].index[0]]
-    df = df[df.index <= df[df.index.month == 12].index[-1]]
-
-    # Seasonal data
-    seasonal_data = {}
-    for year in df.index.year.unique():
-        seasonal_data[year] = df[df.index.year == year].reset_index()['return']
-    seasonal_data = pd.DataFrame(seasonal_data)
-
-    # Monthly Cumulative Returns
-    year_long = seasonal_data[-1:].T.dropna().index[0]
-    seasonal_data.index = df[df.index.year == year_long].index.strftime('%Y%m')
-    seasonal_returns = seasonal_data.dropna(how='all').groupby(seasonal_data.index).cumsum()
-    seasonal_returns.reset_index(drop=True, inplace=True)
-    seasonal_returns = seasonal_returns.dropna(how='all').mean(axis=1)
-
-    # Monthly Data Summary
-    monthly = {}
-    for year in df.index.year.unique():
-        yeardf = df[df.index.year == year]
-        monthly[year] = yeardf.groupby(yeardf.index.month).sum() * 100
-
-    data = pd.concat(monthly, axis=1)
-    data.columns = [col[0] for col in data.columns]
-    data.index = months
-
-    summary = pd.DataFrame(data.mean(axis=1))
-    summary.columns = ['Return %']
-
-    # Create a line plot using matplotlib
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(summary.index, summary['Return %'].round(2), marker='o', color='green', label='Monthly Returns')
-    ax.axhline(0, color='red', linestyle='--', label='Zero Return')
-
-    # Set plot title and axis labels
-    ax.set(title=f'Seasonal Chart : {ticker}', xlabel='Month', ylabel='Return %')
-    ax.legend()
-    plt.grid(True)
-    plt.show()
